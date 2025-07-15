@@ -1,0 +1,472 @@
+---
+title: "TPM Naive Bayes"
+author: "Johannes Pande Manurung"
+date: "2025-05-22"
+output: rmdformats::readthedown
+---
+
+# Library
+```{r, warning=FALSE, message=FALSE}
+library(e1071)
+library(caret)
+library(dplyr)
+library(ROSE)
+library(naivebayes)
+library(corrplot)
+library(FSelectorRcpp)
+```
+
+```{r}
+set.seed(123)
+```
+
+
+# Import Data
+```{r}
+dt.pdk <- read.csv("C:\\Users\\Asus\\Documents\\IPB\\Semester 6\\Teknik Pembelajaran Mesin\\data.csv", sep = ";")
+dt.pdk <- subset(dt.pdk, Target != "Enrolled")
+```
+
+
+```{r}
+str(dt.pdk)
+```
+
+```{r}
+# Mengubah data character menjadi faktor
+dt.pdk <- dt.pdk %>% mutate_if(is.character, as.factor)
+```
+
+```{r}
+dt.pdk <- dt.pdk %>%
+   mutate(across(c(1:12, 14:19, 21), as.factor))
+```
+
+# Eksplorasi Data
+
+```{r}
+# Melihat proporsi peubah respons
+table(dt.pdk$Target)
+```
+
+```{r}
+# Visualisasi korelasi
+
+# Hitung matriks korelasi dari peubah numerik
+df_numeric <- dt.pdk[sapply(dt.pdk, is.numeric)]
+
+
+cor_matrix <- cor(df_numeric, use = "complete.obs", method = "pearson")
+
+
+
+# Membuat visualisasi plot korelasi
+corrplot(cor_matrix, 
+         method = "color",    # Gunakan warna sebagai indikator
+         type = "upper",      # Hanya tampilkan segitiga atas
+         addCoef.col = "black", # Tampilkan nilai korelasi
+         tl.cex = 0.8,        # Ukuran teks label
+         number.cex = 0.7,    # Ukuran teks angka korelasi
+         col = colorRampPalette(c("red", "white", "blue"))(200)) # Skala warna
+
+```
+# Membagi dataset
+
+```{r}
+# Membagi data menjadi training dan testing set
+
+trainIndex <- createDataPartition(dt.pdk$Target, p = 0.8, list = FALSE)
+trainData <- dt.pdk[trainIndex, ]
+testData <- dt.pdk[-trainIndex, ]
+```
+
+# Naive Bayes e1071
+## Oversampling
+```{r}
+# Over-sampling data
+up_train <- upSample(x = trainData[, -37], y = trainData$Target)
+```
+
+
+```{r}
+# Cek proporsi kelas setelah oversampling
+colnames(up_train)[ncol(up_train)] <- "Target"
+table(up_train$Target)
+```
+
+
+
+```{r}
+testData_X <- testData[,-37]
+testData_Y <- testData$Target
+```
+
+```{r}
+trainData_X <- up_train[,-37]
+trainData_Y <- up_train$Target
+```
+
+
+```{r}
+table(trainData$Target)
+```
+
+
+
+```{r}
+nb_over <- naiveBayes(Target~. , data = up_train)
+```
+
+
+```{r}
+prediksi_over <- predict(nb_over, testData_X)
+```
+
+
+```{r}
+# Evaluasi performa model dengan ovesampling
+conf_matrix_over <- confusionMatrix(data = prediksi_over, reference = testData_Y)
+print(conf_matrix_over)
+```
+
+```{r}
+conf_matrix_over$byClass
+```
+
+
+## Data asli
+
+```{r}
+testData_X_asli <- testData[,-37]
+testData_Y_asli <- testData$Target
+```
+
+
+
+```{r}
+trainData_X_asli <- trainData[,-37]
+trainData_Y_asli <- trainData$Target
+```
+
+```{r}
+nb_asli <- naiveBayes(Target~. , data = trainData)
+```
+
+```{r}
+prediksi_asli <- predict(nb_asli, testData_X_asli)
+```
+
+```{r}
+# Evaluasi performa model dengan data asli
+conf_matrix_asli <- confusionMatrix(data = prediksi_asli, reference = testData_Y_asli)
+print(conf_matrix_asli)
+```
+
+```{r}
+conf_matrix_asli$byClass
+```
+
+## Undersampling
+```{r}
+# Under-sampling data
+down_train <- downSample(x = trainData[, -37], y = trainData$Target)
+```
+
+```{r}
+# Cek proporsi kelas setelah undersampling
+colnames(down_train)[ncol(down_train)] <- "Target"
+table(down_train$Target)
+```
+```{r}
+testData_X_down <- testData[, -37]
+testData_Y_down <- testData$Target
+```
+
+
+
+```{r}
+trainData_X_down <- down_train[,-37]
+trainData_Y_down <- down_train$Target
+```
+
+```{r}
+nb_down <- naiveBayes(Target~. , data = down_train)
+```
+
+```{r}
+prediksi_down <- predict(nb_down, testData_X_down)
+```
+
+```{r}
+length(prediksi_down)
+```
+
+
+```{r}
+# Evaluasi performa model undersampling
+conf_matrix_down <- confusionMatrix(data = prediksi_down, reference = testData_Y_down)
+print(conf_matrix_down)
+```
+```{r}
+conf_matrix_down$byClass
+```
+# Kurva ROC
+```{r}
+library(pROC)
+library(ROCR)
+library(ggplot2)
+library(dplyr)
+```
+
+## Oversampling
+```{r}
+# Melakukan prediksi probabilitas untuk data test (model oversampling)
+pred_prob_oversample <- predict(nb_over, newdata = testData_X, type = "raw")
+
+# Memastikan kolom probabilitas sesuai dengan level target
+if (is.matrix(pred_prob_oversample)) {
+  # Ambil probabilitas untuk kelas "Graduate"
+  prob_graduate_oversample <- pred_prob_oversample[, "Graduate"]
+} else {
+  prob_graduate_oversample <- pred_prob_oversample
+}
+
+# mengonversi target ke format numerik (0 = Dropout, 1 = Graduate)
+target_numeric <- as.numeric(testData_Y == "Graduate")
+
+# Buat ROC
+roc_oversample <- roc(target_numeric, prob_graduate_oversample, levels = c(0, 1), direction = "<")
+
+# Print informasi ROC
+cat("=== ROC Analysis - Model Oversampling ===\n")
+```
+
+```{r}
+cat("AUC:", round(auc(roc_oversample), 4), "\n")
+```
+```{r}
+cat("95% CI:", round(ci.auc(roc_oversample), 4), "\n\n")
+```
+
+## Data Asli
+```{r}
+# Prediksi probabilitas untuk data test (model data asli)
+pred_prob_original <- predict(nb_asli, newdata = testData_X_asli, type = "raw")
+
+# Pastikan kolom probabilitas sesuai dengan level target
+if (is.matrix(pred_prob_original)) {
+  prob_graduate_original <- pred_prob_original[, "Graduate"]
+} else {
+  prob_graduate_original <- pred_prob_original
+}
+
+# Mengonversi target ke format numerik
+target_numeric_original <- as.numeric(testData_Y_asli == "Graduate")
+
+# Buat ROC
+roc_original <- roc(target_numeric_original, prob_graduate_original, levels = c(0, 1), direction = "<")
+
+# Print informasi ROC
+cat("=== ROC Analysis - Model Data Asli ===\n")
+```
+```{r}
+cat("AUC:", round(auc(roc_original), 4), "\n")
+```
+```{r}
+cat("95% CI:", round(ci.auc(roc_original), 4), "\n\n")
+```
+
+## Undersampling
+
+```{r}
+pred_prob_undersample <- predict(nb_down, testData_X_down, type = "raw")
+
+# Pastikan kolom probabilitas sesuai dengan level target
+if (is.matrix(pred_prob_undersample)) {
+  # Ambil probabilitas untuk kelas "Graduate"
+  prob_graduate_undersample <- pred_prob_undersample[, "Graduate"]
+} else {
+  prob_graduate_undersample <- pred_prob_undersample
+}
+
+# Mengonversi target ke format numerik (0 = Dropout, 1 = Graduate)
+target_numeric <- as.numeric(testData_Y == "Graduate")
+
+# Buat ROC
+roc_undersample <- roc(target_numeric, prob_graduate_undersample, levels = c(0, 1), direction = "<")
+
+# Print informasi ROC
+cat("=== ROC Analysis - Model Oversampling ===\n")
+```
+
+```{r}
+cat("AUC:", round(auc(roc_undersample), 4), "\n")
+```
+```{r}
+cat("95% CI:", round(ci.auc(roc_undersample), 4), "\n\n")
+```
+# Visualisasi
+## Oversampling
+```{r}
+# ROC dengan Data Oversampling
+plot(roc_oversample, 
+     main = "ROC dengan Data Oversampling", 
+     col = "blue", 
+     lwd = 2,
+     legacy.axes = TRUE)
+text(0.6, 0.2, paste("AUC =", round(auc(roc_oversample), 3)), col = "blue", cex = 1.1)
+abline(a = 0, b = 1, lty = 2, col = "gray")
+```
+
+## Data Asli
+```{r}
+# ROC dengan Data Asli
+plot(roc_original, 
+     main = "ROC dengan Data Asli", 
+     col = "red", 
+     lwd = 2,
+     legacy.axes = TRUE)
+text(0.6, 0.2, paste("AUC =", round(auc(roc_original), 3)), col = "red", cex = 1.1)
+abline(a = 0, b = 1, lty = 2, col = "gray")
+```
+
+## Undersampling
+```{r}
+# ROC untuk Data Undersampling
+plot(roc_undersample, 
+     main = "ROC dengan Data Undersampling", 
+     col = "darkgreen", 
+     lwd = 2,
+     legacy.axes = TRUE)
+text(0.6, 0.2, paste("AUC =", round(auc(roc_undersample), 3)), col = "darkgreen", cex = 1.1)
+abline(a = 0, b = 1, lty = 2, col = "gray")
+```
+
+# Variabel Important dengan Information Gain
+
+
+```{r}
+info_gain_over <- information_gain(Target~. , data = up_train)
+print(info_gain_over)
+```
+
+```{r}
+info_gain_asli <- information_gain(Target~. , data = trainData)
+print(info_gain_asli)
+```
+
+```{r}
+info_gain_under <- information_gain(Target~. , data = down_train)
+print(info_gain_under)
+```
+
+
+
+```{r}
+var_types <- data.frame(
+  variable = names(dt.pdk),
+  type = sapply(dt.pdk, function(x) {
+    if(is.numeric(x)) {
+      "numeric"
+    } else if(is.factor(x) || is.character(x)) {
+      "categorical"
+    } else {
+      class(x)
+    }
+  }),
+  stringsAsFactors = FALSE
+)
+
+var_types 
+```
+
+```{r}
+colnames(var_types)[colnames(var_types) == "variable"] <- "attributes"
+```
+
+```{r}
+merged_info_gain_under <- merge(info_gain_under, var_types, by = "attributes")
+print(merged_info_gain_under)
+```
+
+```{r}
+merged_info_gain_over <- merge(info_gain_over, var_types, by = "attributes")
+print(merged_info_gain_over)
+```
+
+```{r}
+merged_info_gain_asli <- merge(info_gain_asli, var_types, by = "attributes")
+print(merged_info_gain_asli)
+```
+
+
+## Visualisasi Information Gain
+
+```{r}
+merged_info_gain_over15 <- merged_info_gain_over %>%
+  slice_max(order_by = importance, n = 15) %>%
+  arrange(importance) %>%
+  mutate(attributes = factor(attributes, levels = attributes))
+```
+
+
+```{r}
+# Visualisasi top 15 Information Gain Data Oversampling
+ggplot(merged_info_gain_over15, aes(x = attributes, y = importance, fill = type)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top 15 Information Gain Data Oversampling",
+       x = "Attributes",
+       y = "Information Gain",
+       fill = "Variable Type") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+merged_info_gain_asli15 <- merged_info_gain_asli %>%
+  slice_max(order_by = importance, n = 15) %>%
+  arrange(importance) %>%
+  mutate(attributes = factor(attributes, levels = attributes))
+```
+
+
+```{r}
+# Visualisasi top 15 Information Gain Data Asli
+ggplot(merged_info_gain_asli15, aes(x = attributes, y = importance, fill = type)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top 15 Information Gain Data Asli",
+       x = "Attributes",
+       y = "Information Gain",
+       fill = "Variable Type") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5))
+```
+```{r}
+merged_info_gain_under15 <- merged_info_gain_under %>%
+  slice_max(order_by = importance, n = 15) %>%
+  arrange(importance) %>%
+  mutate(attributes = factor(attributes, levels = attributes))
+```
+
+
+```{r}
+# Visualisasi top 15 Information Gain Data Undersampling
+ggplot(merged_info_gain_under15, aes(x = attributes, y = importance, fill = type)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top 15 Information Gain Data Undersampling",
+       x = "Attributes",
+       y = "Information Gain",
+       fill = "Variable Type") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5))
+```
+
+
+
+
